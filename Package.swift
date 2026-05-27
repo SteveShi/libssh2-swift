@@ -15,12 +15,16 @@ let package = Package(
     targets: [
         .target(
             name: "libssh2-swift",
+            dependencies: ["Clibssh2"]
+        ),
+        .target(
+            name: "Clibssh2",
             dependencies: ["libssh2"]
         ),
         .binaryTarget(
             name: "libssh2",
-            url: "https://github.com/SteveShi/libssh2-swift/releases/download/v1.1.0/libssh2.xcframework.zip",
-            checksum: "488849a2636530c679bda5aabd22e9c807e60987cac1635688b350e28ac35a49"
+            url: "https://github.com/SteveShi/libssh2-swift/releases/download/v1.2.0/libssh2.xcframework.zip",
+            checksum: "03ac76d8fd29f1549d3e92716391e54fa39e0ceef64108d8d043d98c71babedb"
         )
     ]
 )
