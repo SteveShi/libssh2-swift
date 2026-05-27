@@ -17,6 +17,8 @@ public actor SSHSession {
 
     public private(set) var state: State = .disconnected
 
+    public init() {}
+
     private var session: OpaquePointer?
     private var channel: OpaquePointer?
     private var socketFD: Int32 = -1
