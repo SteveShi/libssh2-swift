@@ -1,16 +1,28 @@
 name: Auto Update Upstream Releases
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Sources/**'
+      - 'scripts/**'
+      - 'Package.swift'
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force compilation and release of current version'
+        required: false
+        default: 'false'
 
 permissions:
   contents: write
 
 jobs:
   check-and-build:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - name: Checkout Swift Package
         uses: actions/checkout@v6
@@ -65,7 +77,13 @@ jobs:
             echo "latest_libssh2=$LATEST_LIBSSH2" >> "$GITHUB_OUTPUT"
             echo "latest_awslc=$LATEST_AWSLC" >> "$GITHUB_OUTPUT"
           else
-            echo "updates_available=false" >> "$GITHUB_OUTPUT"
+            if [[ "${{ github.event_name }}" == "push" || "${{ github.event.inputs.force }}" == "true" ]]; then
+              echo "updates_available=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "updates_available=false" >> "$GITHUB_OUTPUT"
+            fi
+            echo "latest_libssh2=$CURRENT_LIBSSH2" >> "$GITHUB_OUTPUT"
+            echo "latest_awslc=$CURRENT_AWSLC" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Compile and Release
