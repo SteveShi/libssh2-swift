@@ -38,29 +38,32 @@ jobs:
             LATEST_LIBSSH2=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/libssh2/libssh2/tags | jq -r '.[0].name')
           fi
 
-          # Get latest tag of BoringSSL
-          LATEST_BORINGSSL=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/google/boringssl/tags | jq -r '.[0].name')
+          # Get latest tag of AWS-LC
+          LATEST_AWSLC=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/aws/aws-lc/releases/latest | jq -r .tag_name)
+          if [[ -z "$LATEST_AWSLC" || "$LATEST_AWSLC" == "null" ]]; then
+            LATEST_AWSLC=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/aws/aws-lc/tags | jq -r '.[0].name')
+          fi
 
           echo "Latest Upstream libssh2: $LATEST_LIBSSH2"
-          echo "Latest Upstream BoringSSL: $LATEST_BORINGSSL"
+          echo "Latest Upstream AWS-LC: $LATEST_AWSLC"
 
           # Read current recorded versions
           CURRENT_LIBSSH2=""
           if [[ -f upstream_libssh2.txt ]]; then
             CURRENT_LIBSSH2=$(cat upstream_libssh2.txt)
           fi
-          CURRENT_BORINGSSL=""
-          if [[ -f upstream_boringssl.txt ]]; then
-            CURRENT_BORINGSSL=$(cat upstream_boringssl.txt)
+          CURRENT_AWSLC=""
+          if [[ -f upstream_awslc.txt ]]; then
+            CURRENT_AWSLC=$(cat upstream_awslc.txt)
           fi
 
           echo "Current libssh2: $CURRENT_LIBSSH2"
-          echo "Current BoringSSL: $CURRENT_BORINGSSL"
+          echo "Current AWS-LC: $CURRENT_AWSLC"
 
-          if [[ "$LATEST_LIBSSH2" != "$CURRENT_LIBSSH2" || "$LATEST_BORINGSSL" != "$CURRENT_BORINGSSL" ]]; then
+          if [[ "$LATEST_LIBSSH2" != "$CURRENT_LIBSSH2" || "$LATEST_AWSLC" != "$CURRENT_AWSLC" ]]; then
             echo "updates_available=true" >> "$GITHUB_OUTPUT"
             echo "latest_libssh2=$LATEST_LIBSSH2" >> "$GITHUB_OUTPUT"
-            echo "latest_boringssl=$LATEST_BORINGSSL" >> "$GITHUB_OUTPUT"
+            echo "latest_awslc=$LATEST_AWSLC" >> "$GITHUB_OUTPUT"
           else
             echo "updates_available=false" >> "$GITHUB_OUTPUT"
           fi
@@ -70,7 +73,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LATEST_LIBSSH2: ${{ steps.check-versions.outputs.latest_libssh2 }}
-          LATEST_BORINGSSL: ${{ steps.check-versions.outputs.latest_boringssl }}
+          LATEST_AWSLC: ${{ steps.check-versions.outputs.latest_awslc }}
         run: |
           set -euo pipefail
 
@@ -81,8 +84,8 @@ jobs:
 
           chmod +x scripts/*.sh
 
-          # Compile BoringSSL and libssh2
-          ./scripts/build_boringssl.sh "${LATEST_BORINGSSL}"
+          # Compile AWS-LC and libssh2
+          ./scripts/build_awslc.sh "${LATEST_AWSLC}"
           ./scripts/build_libssh2.sh
 
           # Merge libraries
@@ -150,16 +153,17 @@ jobs:
 
           # Save version records
           echo "${LATEST_LIBSSH2}" > upstream_libssh2.txt
-          echo "${LATEST_BORINGSSL}" > upstream_boringssl.txt
+          echo "${LATEST_AWSLC}" > upstream_awslc.txt
 
           # Configure Git and push
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Package.swift upstream_libssh2.txt upstream_boringssl.txt
-          git commit -m "Auto-update: libssh2 to ${LATEST_LIBSSH2}, BoringSSL to ${LATEST_BORINGSSL} [skip ci]"
+          git rm -f upstream_boringssl.txt || true
+          git add Package.swift upstream_libssh2.txt upstream_awslc.txt
+          git commit -m "Auto-update: libssh2 to ${LATEST_LIBSSH2}, AWS-LC to ${LATEST_AWSLC} [skip ci]"
           git push origin main
 
           # Create Release and upload asset
           gh release create "${NEXT_PKG_VERSION}" ThirdParty/libssh2kit.xcframework.zip \
             --title "${NEXT_PKG_VERSION}" \
-            --notes "Automatically compiled with libssh2 ${LATEST_LIBSSH2} and BoringSSL ${LATEST_BORINGSSL}"
+            --notes "Automatically compiled with libssh2 ${LATEST_LIBSSH2} and AWS-LC ${LATEST_AWSLC}"
