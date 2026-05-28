@@ -27,17 +27,19 @@ jobs:
 
       - name: Fetch Upstream Versions
         id: check-versions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
           # Get latest stable release tag of libssh2
-          LATEST_LIBSSH2=$(curl -s https://api.github.com/repos/libssh2/libssh2/releases/latest | jq -r .tag_name)
+          LATEST_LIBSSH2=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/libssh2/libssh2/releases/latest | jq -r .tag_name)
           if [[ -z "$LATEST_LIBSSH2" || "$LATEST_LIBSSH2" == "null" ]]; then
-            LATEST_LIBSSH2=$(curl -s https://api.github.com/repos/libssh2/libssh2/tags | jq -r '.[0].name')
+            LATEST_LIBSSH2=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/libssh2/libssh2/tags | jq -r '.[0].name')
           fi
 
           # Get latest tag of BoringSSL
-          LATEST_BORINGSSL=$(curl -s https://api.github.com/repos/google/boringssl/tags | jq -r '.[0].name')
+          LATEST_BORINGSSL=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/google/boringssl/tags | jq -r '.[0].name')
 
           echo "Latest Upstream libssh2: $LATEST_LIBSSH2"
           echo "Latest Upstream BoringSSL: $LATEST_BORINGSSL"
