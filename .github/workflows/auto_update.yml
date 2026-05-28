@@ -1,0 +1,163 @@
+name: Auto Update Upstream Releases
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout Swift Package
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+
+      - name: Fetch Upstream Versions
+        id: check-versions
+        run: |
+          set -euo pipefail
+
+          # Get latest stable release tag of libssh2
+          LATEST_LIBSSH2=$(curl -s https://api.github.com/repos/libssh2/libssh2/releases/latest | jq -r .tag_name)
+          if [[ -z "$LATEST_LIBSSH2" || "$LATEST_LIBSSH2" == "null" ]]; then
+            LATEST_LIBSSH2=$(curl -s https://api.github.com/repos/libssh2/libssh2/tags | jq -r '.[0].name')
+          fi
+
+          # Get latest tag of BoringSSL
+          LATEST_BORINGSSL=$(curl -s https://api.github.com/repos/google/boringssl/tags | jq -r '.[0].name')
+
+          echo "Latest Upstream libssh2: $LATEST_LIBSSH2"
+          echo "Latest Upstream BoringSSL: $LATEST_BORINGSSL"
+
+          # Read current recorded versions
+          CURRENT_LIBSSH2=""
+          if [[ -f upstream_libssh2.txt ]]; then
+            CURRENT_LIBSSH2=$(cat upstream_libssh2.txt)
+          fi
+          CURRENT_BORINGSSL=""
+          if [[ -f upstream_boringssl.txt ]]; then
+            CURRENT_BORINGSSL=$(cat upstream_boringssl.txt)
+          fi
+
+          echo "Current libssh2: $CURRENT_LIBSSH2"
+          echo "Current BoringSSL: $CURRENT_BORINGSSL"
+
+          if [[ "$LATEST_LIBSSH2" != "$CURRENT_LIBSSH2" || "$LATEST_BORINGSSL" != "$CURRENT_BORINGSSL" ]]; then
+            echo "updates_available=true" >> "$GITHUB_OUTPUT"
+            echo "latest_libssh2=$LATEST_LIBSSH2" >> "$GITHUB_OUTPUT"
+            echo "latest_boringssl=$LATEST_BORINGSSL" >> "$GITHUB_OUTPUT"
+          else
+            echo "updates_available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compile and Release
+        if: steps.check-versions.outputs.updates_available == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST_LIBSSH2: ${{ steps.check-versions.outputs.latest_libssh2 }}
+          LATEST_BORINGSSL: ${{ steps.check-versions.outputs.latest_boringssl }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ThirdParty
+
+          # Modify build_libssh2.sh to clone the new version of libssh2
+          sed -i '' "s|git clone https://github.com/libssh2/libssh2.git \"\$SRC\"|git clone --branch ${LATEST_LIBSSH2} https://github.com/libssh2/libssh2.git \"\$SRC\"|g" scripts/build_libssh2.sh
+
+          chmod +x scripts/*.sh
+
+          # Compile BoringSSL and libssh2
+          ./scripts/build_boringssl.sh "${LATEST_BORINGSSL}"
+          ./scripts/build_libssh2.sh
+
+          # Merge libraries
+          libtool -static -o ThirdParty/lib/libssh2_merged.a ThirdParty/lib/libssh2.a ThirdParty/lib/libssl.a ThirdParty/lib/libcrypto.a
+
+          # Create headers
+          mkdir -p ThirdParty/libssh2kit_headers
+          cp ThirdParty/include/libssh2*.h ThirdParty/libssh2kit_headers/
+          cp ThirdParty/include/openssl/*.h ThirdParty/libssh2kit_headers/
+
+          # Package framework
+          rm -rf ThirdParty/libssh2kit.xcframework
+          xcodebuild -create-xcframework -library ThirdParty/lib/libssh2_merged.a -headers ThirdParty/libssh2kit_headers -output ThirdParty/libssh2kit.xcframework
+
+          # Zip
+          cd ThirdParty
+          zip -qy -r libssh2kit.xcframework.zip libssh2kit.xcframework
+          cd ..
+
+          # Compute checksum
+          CHECKSUM=$(swift package compute-checksum ThirdParty/libssh2kit.xcframework.zip)
+          echo "New Checksum: $CHECKSUM"
+
+          # Determine next version tag
+          CURRENT_PKG_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.3.0")
+          VERSION_NUM=${CURRENT_PKG_VERSION#v}
+          IFS='.' read -r -a VERSION_PARTS <<< "$VERSION_NUM"
+          NEXT_PATCH=$((VERSION_PARTS[2] + 1))
+          NEXT_PKG_VERSION="v${VERSION_PARTS[0]}.${VERSION_PARTS[1]}.${NEXT_PATCH}"
+          echo "Next Package Version: $NEXT_PKG_VERSION"
+
+          # Update Package.swift
+          cat <<EOF > Package.swift
+// swift-tools-version: 6.0
+import PackageDescription
+
+let package = Package(
+    name: "libssh2-swift",
+    platforms: [
+        .macOS(.v15)
+    ],
+    products: [
+        .library(
+            name: "libssh2-swift",
+            targets: ["libssh2-swift"]
+        )
+    ],
+    targets: [
+        .target(
+            name: "libssh2-swift",
+            dependencies: ["Clibssh2"]
+        ),
+        .target(
+            name: "Clibssh2",
+            dependencies: ["libssh2kit"]
+        ),
+        .binaryTarget(
+            name: "libssh2kit",
+            url: "https://github.com/SteveShi/libssh2-swift/releases/download/${NEXT_PKG_VERSION}/libssh2kit.xcframework.zip",
+            checksum: "${CHECKSUM}"
+        )
+    ]
+)
+EOF
+
+          # Save version records
+          echo "${LATEST_LIBSSH2}" > upstream_libssh2.txt
+          echo "${LATEST_BORINGSSL}" > upstream_boringssl.txt
+
+          # Configure Git and push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Package.swift upstream_libssh2.txt upstream_boringssl.txt
+          git commit -m "Auto-update: libssh2 to ${LATEST_LIBSSH2}, BoringSSL to ${LATEST_BORINGSSL} [skip ci]"
+          git push origin main
+
+          # Create Release and upload asset
+          gh release create "${NEXT_PKG_VERSION}" ThirdParty/libssh2kit.xcframework.zip \
+            --title "${NEXT_PKG_VERSION}" \
+            --notes "Automatically compiled with libssh2 ${LATEST_LIBSSH2} and BoringSSL ${LATEST_BORINGSSL}"
