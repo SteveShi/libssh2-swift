@@ -118,7 +118,7 @@ jobs:
           echo "Next Package Version: $NEXT_PKG_VERSION"
 
           # Update Package.swift
-          cat <<'EOF' | sed 's/^          //' > Package.swift
+          cat <<EOF | sed 's/^          //' > Package.swift
           // swift-tools-version: 6.0
           import PackageDescription
 
