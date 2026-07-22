@@ -278,32 +278,65 @@ public actor SSHSession {
     }
 
 
+    private func tryAgentAuth(session: OpaquePointer, username: String) -> Bool {
+        guard let agent = libssh2_agent_init(session) else { return false }
+        defer { libssh2_agent_free(agent) }
+
+        guard libssh2_agent_connect(agent) == 0 else { return false }
+        defer { libssh2_agent_disconnect(agent) }
+
+        guard libssh2_agent_list_identities(agent) == 0 else { return false }
+
+        var identity: UnsafeMutablePointer<libssh2_agent_publickey>? = nil
+        var prev: UnsafeMutablePointer<libssh2_agent_publickey>? = nil
+
+        while libssh2_agent_get_identity(agent, &identity, prev) == 0 {
+            if let identity {
+                let rc = libssh2_agent_userauth(agent, username, identity)
+                if rc == 0 {
+                    return true
+                }
+            }
+            prev = identity
+        }
+        return false
+    }
+
     private func authenticateAndOpenChannel(auth: SSHAuth, cols: Int, rows: Int) async throws -> AsyncStream<Data> {
         guard let session else { throw SSHError.sessionInitFailed }
         guard let username = pendingUsername else { throw SSHError.sessionInitFailed }
 
-        switch auth {
-        case .password(let password, _):
-            let userauth = libssh2_userauth_password_ex(session, username, UInt32(username.utf8.count), password, UInt32(password.utf8.count), nil)
-            guard userauth == 0 else {
-                throw SSHError.authFailed(userauth)
-            }
+        var authenticated = tryAgentAuth(session: session, username: username)
 
-        case .publicKey(let path, let passphrase):
-            let pubPath = path + ".pub"
-            let passphraseCString = passphrase?.utf8CString
-            let passphrasePtr = passphraseCString?.withUnsafeBufferPointer { $0.baseAddress }
-            let userauth = libssh2_userauth_publickey_fromfile_ex(
-                session,
-                username,
-                UInt32(username.utf8.count),
-                pubPath,
-                path,
-                passphrasePtr
-            )
-            guard userauth == 0 else {
-                throw SSHError.authFailed(userauth)
+        if !authenticated {
+            switch auth {
+            case .password(let password, _):
+                let userauth = libssh2_userauth_password_ex(session, username, UInt32(username.utf8.count), password, UInt32(password.utf8.count), nil)
+                if userauth == 0 {
+                    authenticated = true
+                }
+
+            case .publicKey(let path, let passphrase):
+                let pubPath = path + ".pub"
+                let hasPub = FileManager.default.fileExists(atPath: pubPath)
+                let passphraseCString = passphrase?.utf8CString
+                let passphrasePtr = passphraseCString?.withUnsafeBufferPointer { $0.baseAddress }
+                let userauth = libssh2_userauth_publickey_fromfile_ex(
+                    session,
+                    username,
+                    UInt32(username.utf8.count),
+                    hasPub ? pubPath : nil,
+                    path,
+                    passphrasePtr
+                )
+                if userauth == 0 {
+                    authenticated = true
+                }
             }
+        }
+
+        guard authenticated else {
+            throw SSHError.authFailed(-16)
         }
 
         let windowSize: UInt32 = 2 * 1024 * 1024
