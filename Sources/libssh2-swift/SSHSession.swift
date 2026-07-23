@@ -108,23 +108,18 @@ public actor SSHSession {
             self.session = s
             pendingUsername = username
 
-            switch try KnownHostsStore.check(session: s, host: host, port: port) {
+            let checkResult = try KnownHostsStore.check(session: s, host: host, port: port)
+            switch checkResult {
             case .match:
                 break
-            case .notFound(let keyData, let keyType):
+            case let .notFound(keyData, keyType), let .mismatch(keyData, keyType):
+                let status: HostKeyStatus = if case .notFound = checkResult { .notFound } else { .mismatch }
                 pendingHostKey = keyData
                 pendingHostKeyType = keyType
                 pendingHost = host
                 pendingPort = port
-                pendingHostStatus = .notFound
-                throw SSHError.hostKeyNotTrusted(.notFound)
-            case .mismatch(let keyData, let keyType):
-                pendingHostKey = keyData
-                pendingHostKeyType = keyType
-                pendingHost = host
-                pendingPort = port
-                pendingHostStatus = .mismatch
-                throw SSHError.hostKeyNotTrusted(.mismatch)
+                pendingHostStatus = status
+                throw SSHError.hostKeyNotTrusted(status)
             }
 
             return try await authenticateAndOpenChannel(auth: auth, cols: cols, rows: rows)
@@ -378,14 +373,10 @@ public actor SSHSession {
     private func startReadingLoop() -> AsyncStream<Data> {
         AsyncStream { continuation in
             Task { [weak self] in
-                await self?.saveContinuation(continuation)
+                self?.outputContinuation = continuation
                 await self?.readLoop(continuation: continuation)
             }
         }
-    }
-
-    private func saveContinuation(_ continuation: AsyncStream<Data>.Continuation) {
-        outputContinuation = continuation
     }
 
     private func readLoop(continuation: AsyncStream<Data>.Continuation) async {
@@ -488,7 +479,6 @@ public enum SSHError: LocalizedError {
     case connectionFailed
     case notConnected
     case knownHostsInitFailed
-    case knownHostsMismatch
     case knownHostsCheckFailed(Int32)
     case knownHostsWriteFailed(Int32)
     case hostKeyUnavailable
@@ -522,8 +512,6 @@ public enum SSHError: LocalizedError {
             return "Not connected"
         case .knownHostsInitFailed:
             return "known_hosts init failed"
-        case .knownHostsMismatch:
-            return "Host key mismatch. Connection aborted."
         case .knownHostsCheckFailed(let code):
             return "known_hosts check failed (\(code))"
         case .knownHostsWriteFailed(let code):

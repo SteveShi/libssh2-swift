@@ -3,7 +3,6 @@ import libssh2
 
 public actor SFTPService {
     public enum SFTPError: LocalizedError {
-        case notConnected
         case initFailed
         case openDirFailed
         case readFailed
@@ -13,7 +12,6 @@ public actor SFTPService {
 
         public var errorDescription: String? {
             switch self {
-            case .notConnected: return "SFTP not connected"
             case .initFailed: return "SFTP init failed"
             case .openDirFailed: return "SFTP open directory failed"
             case .readFailed: return "SFTP read failed"
@@ -53,10 +51,7 @@ public actor SFTPService {
             while true {
                 let rc = libssh2_sftp_readdir_ex(dir, &nameBuffer, nameBuffer.count, &longBuffer, longBuffer.count, &attrs)
                 if rc > 0 {
-                    let name = nameBuffer.withUnsafeBufferPointer { ptr in
-                        let length = ptr.prefix(while: { $0 != 0 }).count
-                        return String(decoding: UnsafeRawBufferPointer(start: ptr.baseAddress, count: length), as: UTF8.self)
-                    }
+                    let name = String(cString: nameBuffer)
                     if name == "." || name == ".." { continue }
                     let isDir: Bool
                     let attrPermissions = UInt(LIBSSH2_SFTP_ATTR_PERMISSIONS)

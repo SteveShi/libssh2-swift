@@ -28,8 +28,7 @@ public struct KnownHostsStore {
     }
 
     public static func defaultPath() -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".ssh/known_hosts").path
+        URL.homeDirectory.appending(path: ".ssh/known_hosts").path
     }
 
     public static func check(session: OpaquePointer, host: String, port: Int) throws -> HostKeyCheckResult {
@@ -84,12 +83,12 @@ public struct KnownHostsStore {
         let path = defaultPath()
         _ = libssh2_knownhost_readfile(knownHosts, path, LIBSSH2_KNOWNHOST_FILE_OPENSSH)
 
-        if replace {
-            keyData.withUnsafeBytes { buffer in
-                guard let base = buffer.bindMemory(to: Int8.self).baseAddress else { return }
-                var knownHost: UnsafeMutablePointer<libssh2_knownhost>?
-                let keyMask = knownHostKeyMask(for: keyType)
-                let typeMask = Int32(LIBSSH2_KNOWNHOST_TYPE_PLAIN | LIBSSH2_KNOWNHOST_KEYENC_RAW) | keyMask
+        let typeMask = Int32(LIBSSH2_KNOWNHOST_TYPE_PLAIN | LIBSSH2_KNOWNHOST_KEYENC_RAW) | knownHostKeyMask(for: keyType)
+
+        let addResult = keyData.withUnsafeBytes { buffer -> Int32 in
+            guard let base = buffer.bindMemory(to: Int8.self).baseAddress else { return -1 }
+            if replace {
+                var existingHost: UnsafeMutablePointer<libssh2_knownhost>?
                 _ = libssh2_knownhost_checkp(
                     knownHosts,
                     host,
@@ -97,18 +96,12 @@ public struct KnownHostsStore {
                     base,
                     buffer.count,
                     typeMask,
-                    &knownHost
+                    &existingHost
                 )
-                if let knownHost {
-                    libssh2_knownhost_del(knownHosts, knownHost)
+                if let existingHost {
+                    libssh2_knownhost_del(knownHosts, existingHost)
                 }
             }
-        }
-
-        let addResult = keyData.withUnsafeBytes { buffer -> Int32 in
-            guard let base = buffer.bindMemory(to: Int8.self).baseAddress else { return -1 }
-            let keyMask = knownHostKeyMask(for: keyType)
-            let typeMask = Int32(LIBSSH2_KNOWNHOST_TYPE_PLAIN | LIBSSH2_KNOWNHOST_KEYENC_RAW) | keyMask
             return libssh2_knownhost_addc(
                 knownHosts,
                 host,
